@@ -1,0 +1,45 @@
+[project]
+name = "llm-router"
+version = "0.1.0"
+description = "Routes each LLM call across free-tier providers, with a quota ledger and a tiered fallback ladder."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "langchain-core>=0.3",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    "httpx>=0.27",
+    # Provider wrappers. providers.py imports them lazily, so a missing package
+    # disables that provider rather than breaking the import - but the router is
+    # only useful with somewhere to route to, so the in-scope ones are required.
+    "langchain-groq>=0.2",
+    "langchain-mistralai>=0.2",
+    "langchain-google-genai>=2.0",
+    # OpenRouter and NVIDIA NIM are both OpenAI-compatible, so one package
+    # serves both.
+    "langchain-openai>=0.2",
+    # Local Ollama daemon: free, unmetered, and the only keyless endpoint.
+    "langchain-ollama>=0.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# models.yaml and limits.yaml are loaded relative to the package directory
+# (`CONFIG_DIR = Path(__file__).parent / "config"`), so they have to be inside
+# the wheel or an installed copy has no configuration to read. Naming the
+# package here is enough - hatchling ships every file under it, data included.
+#
+# There was a `force-include` for `llm_router/config` as well, which was
+# redundant and actively broke the build: hatchling refuses to add the same
+# path to a wheel twice. It went unnoticed because an editable install never
+# builds a wheel, so it only failed the first time this was installed properly.
+packages = ["llm_router"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

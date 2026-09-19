@@ -1,0 +1,21 @@
+# Core - always needed
+langchain-core>=0.3
+pyyaml>=6.0
+python-dotenv>=1.0
+httpx>=0.27
+
+# Provider wrappers - install only the ones you route to. providers.py imports
+# them lazily, so a missing package disables that provider rather than breaking
+# the import.
+langchain-groq>=0.2
+langchain-mistralai>=0.2
+langchain-google-genai>=2.0
+# OpenRouter and NVIDIA NIM are both OpenAI-compatible endpoints, so one
+# package serves both.
+langchain-openai>=0.2
+# A local Ollama daemon: free, unmetered, and the only endpoint that works with
+# no API keys at all.
+langchain-ollama>=0.2
+
+# Development
+pytest>=8.0

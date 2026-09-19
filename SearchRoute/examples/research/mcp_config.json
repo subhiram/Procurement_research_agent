@@ -1,0 +1,30 @@
+{
+  "_comment": [
+    "Paste the mcpServers block into your MCP client's config and SearchRoute's",
+    "five tools appear with no code on your side.",
+    "",
+    "Claude Code:    ~/.claude.json  (or run: claude mcp add)",
+    "Claude Desktop: ~/Library/Application Support/Claude/claude_desktop_config.json (macOS)",
+    "",
+    "Replace /path/to/python with the interpreter that has searchroute installed,",
+    "and set whichever provider keys you have. With no keys it still works via",
+    "DuckDuckGo plus local extraction, just less reliably.",
+    "",
+    "SEARCHROUTE_PROFILE and SEARCHROUTE_MAX_RESULTS are the operator's cost",
+    "controls: the model never sees or sets them."
+  ],
+  "mcpServers": {
+    "searchroute": {
+      "command": "/path/to/python",
+      "args": ["-m", "searchroute.tools.mcp_server"],
+      "env": {
+        "TAVILY_API_KEY": "",
+        "EXA_API_KEY": "",
+        "FIRECRAWL_API_KEY": "",
+        "SEARCHROUTE_PROFILE": "quicklook",
+        "SEARCHROUTE_MAX_RESULTS": "5",
+        "SEARCHROUTE_CONTACT": "you@example.com"
+      }
+    }
+  }
+}

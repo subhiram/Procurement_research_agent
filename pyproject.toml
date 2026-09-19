@@ -1,0 +1,98 @@
+[project]
+name = "procurement-research-agent"
+version = "0.1.0"
+description = "Agent that clarifies a raw-material spec, researches it, and returns verified worldwide vendor leads."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "langgraph>=0.2.60",
+    "langgraph-checkpoint-postgres>=2.0.2",
+    "langchain-core>=0.3.0",
+    "psycopg[binary,pool]>=3.2",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "pyyaml>=6.0",
+    "httpx>=0.27",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sse-starlette>=2.1",
+    "python-dotenv>=1.0",
+    # Provider routing lives in these two, not here. Every provider SDK
+    # (langchain-groq, -mistralai, -openai, -ollama, -google-genai) arrives as
+    # their transitive dependency, so this project never names one directly and
+    # cannot drift from what the routers actually support.
+    "llm-router",
+    "searchroute[langchain,ddg,extract]",
+    # Local browser-based crawling. Kept in this project rather than delegated:
+    # it renders JavaScript, which SearchRoute's extraction providers do not,
+    # and vendor contact details frequently live behind that.
+    "crawl4ai>=0.9.3",
+]
+
+# Both routers are developed in-tree alongside this agent.
+[tool.uv.sources]
+llm-router = { path = "./LLMRoute", editable = true }
+searchroute = { path = "./SearchRoute", editable = true }
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    # The lint settings below are only real if this is installed.
+    "ruff>=0.8",
+    # Both routers are developed in this tree, so `uv sync --extra dev` has to
+    # install what their own suites need. Without this, a sync prunes respx and
+    # freezegun and four of SearchRoute's test modules stop collecting - which
+    # looks like their tests passing rather than never running.
+    "searchroute[dev]",
+    "llm-router[dev]",
+]
+
+# Langfuse mirrors the per-run trace to a hosted or self-hosted instance. The
+# local trace in every archived run does not depend on it, so this stays
+# optional.
+observability = [
+    "langfuse>=3",
+]
+
+# A chat UI that opens the graph directly - no FastAPI in the loop. 1.38 is the
+# floor because st.badge (used for the vendor kind labels) was introduced there.
+ui = [
+    "streamlit>=1.38",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/procurement_agent"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+# Selected explicitly rather than left to the default, which shifts between ruff
+# releases and turned a first lint run into 37 findings that were almost all
+# stylistic. These are the families that catch real problems:
+#   E/F  - errors and undefined names
+#   I    - import order, so diffs stay small
+#   B    - bugbear: mutable defaults, loop-variable capture
+#   UP   - syntax this Python version supersedes
+#   SIM  - simplifications that genuinely read better
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+ignore = [
+    # Long lines in prose comments and prompt strings. The limit is enforced on
+    # code by E501 elsewhere; wrapping a prompt to satisfy a linter makes it
+    # harder to read, and these files are mostly prompts.
+    "E501",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests name fixtures after what they build, which shadows imports by design.
+"tests/*" = ["B008"]

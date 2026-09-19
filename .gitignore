@@ -1,0 +1,15 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+.DS_Store
+
+# Archived runs. These hold real companies' email addresses and phone numbers
+# extracted from their websites, so they stay on the machine that produced them.
+runs/
+.env

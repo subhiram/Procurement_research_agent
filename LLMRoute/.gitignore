@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.json.tmp
+
+# Holds live provider API keys. Never commit it - .env.example documents the
+# variable names instead.
+.env

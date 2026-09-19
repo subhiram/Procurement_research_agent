@@ -1,0 +1,128 @@
+# Self-hosted Langfuse, as an opt-in overlay.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.langfuse.yml up -d
+#
+# Not part of the default stack, and that is deliberate. Langfuse v3 is six
+# containers and the project recommends roughly 4 cores / 16 GiB / 100 GiB of
+# disk. On a machine already running a local Ollama model and a headless
+# Chromium, that is a real trade rather than a free addition.
+#
+# The alternative is Langfuse Cloud, whose free tier is 50,000 units/month with
+# a hard cap and no overage - a unit being every trace, span and generation, so
+# this graph burns roughly 40-80 per run. Self-hosting removes that ceiling and
+# costs machine resources instead.
+#
+# **Neither is required.** Every run records its own trace into its runs/*.json
+# file regardless, readable via `GET /runs/{id}`. Langfuse is a nicer UI on top
+# of data that already exists, not the place the data lives.
+#
+# Switching between cloud and self-hosted is one environment variable
+# (LANGFUSE_HOST); no application code changes either way.
+
+services:
+  api:
+    environment:
+      # Point the agent at the local instance instead of the cloud. The keys
+      # below are the ones you create in the Langfuse UI on first run.
+      LANGFUSE_HOST: http://langfuse-web:3000
+
+  langfuse-web:
+    image: langfuse/langfuse:3
+    depends_on:
+      langfuse-postgres:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${LANGFUSE_PORT:-3000}:3000"
+    environment: &langfuse-env
+      DATABASE_URL: postgresql://langfuse:langfuse@langfuse-postgres:5432/langfuse
+      CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_CONNECTION_STRING: redis://langfuse-redis:6379
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      # Both are required and must be stable across restarts, or existing data
+      # becomes unreadable. Change them before this is more than a local trial.
+      NEXTAUTH_SECRET: change-me-in-any-real-deployment
+      SALT: change-me-too
+      ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+      NEXTAUTH_URL: http://localhost:${LANGFUSE_PORT:-3000}
+    restart: unless-stopped
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    depends_on:
+      langfuse-web:
+        condition: service_started
+    environment: *langfuse-env
+    restart: unless-stopped
+
+  langfuse-postgres:
+    # Its own database, deliberately separate from the agent's checkpoints -
+    # observability must not be able to take the agent's data with it.
+    image: postgres:16
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 5s
+      retries: 10
+
+  langfuse-clickhouse:
+    # The analytics store, and the reason this stack is heavy.
+    image: clickhouse/clickhouse-server:24.3
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: clickhouse
+    volumes:
+      - langfuse_clickhouse:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- localhost:8123/ping || exit 1"]
+      interval: 10s
+      retries: 10
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+
+  langfuse-minio:
+    # S3-compatible blob storage for trace payloads too large for ClickHouse.
+    image: minio/minio
+    command: server /data --address ":9000" --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: miniosecret
+    volumes:
+      - langfuse_minio:/data
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      interval: 10s
+      retries: 10
+
+  langfuse-redis:
+    image: redis:7
+    command: --requirepass ""
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  langfuse_pgdata:
+  langfuse_clickhouse:
+  langfuse_minio:

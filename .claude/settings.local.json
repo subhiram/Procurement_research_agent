@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv run *)",
+      "Bash(uv run python -c ' *)",
+      "Bash(uv add *)",
+      "Bash(docker exec *)",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(python3 -)",
+      "Bash(.venv/bin/python -m pyflakes src/procurement_agent/)",
+      "Bash(.venv/bin/python -m compileall -q src/procurement_agent/)",
+      "Bash(.venv/bin/python -m pytest -q)",
+      "Bash(.venv/bin/python LLMRoute/scripts/verify_models.py)",
+      "Bash(.venv/bin/python -m pytest -q tests/test_api.py)",
+      "Bash(../.venv/bin/python -m pytest -q)",
+      "Bash(docker --version)",
+      "Bash(docker compose *)",
+      "Bash(.venv/bin/python -m pip --version)",
+      "Bash(uv build *)",
+      "Bash(rm -rf /tmp/wheeltest)",
+      "Bash(.venv/bin/python -m pytest -q tests/test_search_fallbacks.py)",
+      "Bash(.venv/bin/python -m pytest -q tests/test_docs.py)",
+      "Bash(.venv/bin/python -m ruff check src/ tests/ scripts/ --output-format=concise)",
+      "Bash(.venv/bin/python -m ruff check src/ tests/ scripts/ --fix)",
+      "Bash(.venv/bin/python -m ruff check src/ tests/ scripts/)",
+      "Bash(.venv/bin/python -m pytest -q tests/test_contact_extraction.py)",
+      "Bash(.venv/bin/python -m ruff check src/procurement_agent/ui/)"
+    ]
+  }
+}

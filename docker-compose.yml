@@ -1,0 +1,70 @@
+services:
+  postgres:
+    # pgvector's image is stock postgres:16 plus the `vector` extension. The
+    # extension is no longer used - it went with the vendor cache - but changing
+    # the image forces a collation REINDEX on the existing volume, which is a
+    # cost with no benefit. Left as-is deliberately.
+    image: pgvector/pgvector:pg16
+    container_name: procurement_agent_pg
+    environment:
+      POSTGRES_USER: procurement
+      POSTGRES_PASSWORD: procurement
+      POSTGRES_DB: procurement_agent
+    ports:
+      # Published for the CLI and for psql from the host. The API reaches it
+      # over the compose network instead, on 5432.
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U procurement -d procurement_agent"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    container_name: procurement_agent_api
+    ports:
+      # Bound to loopback on purpose. These endpoints take a single shared key
+      # and `GET /runs` returns real companies' contact details, so exposing
+      # them on the network should be a deliberate edit rather than the default.
+      #
+      # The host port is overridable because 8000 is a popular default and a
+      # collision otherwise stops the whole stack with a daemon-level error
+      # rather than anything explanatory.
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    env_file:
+      - .env
+    environment:
+      # Inside the compose network it is the service name on 5432, not the
+      # host's published 5433. Overrides whatever .env says.
+      DATABASE_URL: postgresql://procurement:procurement@postgres:5432/procurement_agent
+      # Ollama stays on the host, where it has Metal/GPU acceleration and the
+      # models are already pulled. `extra_hosts` below is what makes this
+      # resolve on Linux, where host.docker.internal is not automatic.
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      # Both must live on volumes or they are lost with the container. The
+      # ledger especially: without it every restart believes the daily quota is
+      # unspent and rediscovers the truth through 429s.
+      RUNS_DIR: /app/runs
+      LLM_LEDGER_PATH: /app/state/llm_ledger.json
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./runs:/app/runs
+      - agent_state:/app/state
+    # Chromium maps shared memory for page rendering and the container default
+    # for /dev/shm is 64 MB, which it exhausts on real pages and crashes. This
+    # is the classic silent container failure for headless browsers.
+    shm_size: 1gb
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  # The LLM quota ledger. Named rather than bind-mounted because nothing on the
+  # host needs to read it; `runs/` is bind-mounted because you do.
+  agent_state:

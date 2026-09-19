@@ -1,0 +1,259 @@
+# Quota facts per provider. This file is the ledger's seed data: for every
+# provider except Groq (headers) there is no way to ask "how much have I used?",
+# so these numbers plus locally observed traffic are the only source of truth,
+# corrected whenever a real 429 arrives.
+#
+# The per-model numbers below come straight from each account's own quota
+# dashboard, not estimates - see the models actually referenced from
+# models.yaml. Re-check them periodically; free-tier limits change without
+# notice and a stale number just means the ledger is wrong in whichever
+# direction the drift went (a lowered real limit still gets caught by a 429
+# and self-corrects; a raised real limit just leaves quota unused until this
+# file is updated).
+#
+# Provider fields:
+#   quota_scope       per_model | per_account | per_project | per_session
+#                     -> decides the ledger key. per_model keys on
+#                        (provider, model_id); everything else keys on provider
+#                        alone, so all models share one bucket.
+#   api_key_env       env var (or list of them, first one set wins) holding the
+#                     key. Omit it entirely for a keyless provider such as a
+#                     local Ollama daemon: an empty api_key_env means the auth
+#                     check is skipped and the endpoint stays routable with no
+#                     credentials configured.
+#   enabled           default true; false hides every endpoint of this provider
+#   supports_streaming default true
+#   token_accounting  total | uncached  (informational)
+#   structured_output_method  function_calling (default) | json_schema | json_mode
+#                     How with_structured_output() constrains this provider. Not
+#                     a global setting because the right answer is a property of
+#                     the model: Groq's gpt-oss models answer in prose under
+#                     function calling and get 400ed, and Gemma's tool calling is
+#                     too weak to rely on. Both need json_schema.
+#   min_interval_seconds  pre-emptive spacing between calls. Needed for providers
+#                     whose real limit is a burst limit rather than a per-minute
+#                     average, and for very tight RPM where reacting to a 429 is
+#                     already too late. Accepts either one number for every model
+#                     or a per-model_id mapping.
+#   cooldown_seconds  fallback cooldown when a 429 arrives with no Retry-After.
+#   default_limits    applied to any model_id not listed under `models`.
+#   models            per-model limit overrides.
+#
+# Limit keys are generic: r|t + p + m|h|d|w|mo
+#   rpm/rph/rpd/rpw/rpmo = requests per minute/hour/day/week/month
+#   tpm/tph/tpd/tpw/tpmo = tokens   per minute/hour/day/week/month
+# A `_uncached` suffix (tpm_uncached) is accepted and treated as the same
+# counter, for providers that meter cached and uncached tokens separately.
+
+providers:
+
+  groq:
+    quota_scope: per_model
+    api_key_env: GROQ_API_KEY
+    supports_streaming: true
+    cooldown_seconds: 60
+    # Groq supports json_schema on SOME models only - allam-2-7b returns
+    # "This model does not support response format `json_schema`" as a 400.
+    # So the provider default is the universally supported method and the models
+    # that need json_schema opt in per endpoint in models.yaml. Setting it
+    # provider-wide breaks every request that lands on allam.
+    structured_output_method: function_calling
+    # Groq returns x-ratelimit-* headers on every response and retry-after on
+    # 429, so its ledger entries get corrected from authoritative data. It also
+    # returns a non-standard 498 "flex tier capacity exceeded", which the Groq
+    # wrapper normalises to RateLimited, not to a hard failure.
+    default_limits: {rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000}
+    models:
+      openai/gpt-oss-120b: {rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000}
+      openai/gpt-oss-20b:  {rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000}
+      qwen/qwen3.6-27b:    {rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000}
+      qwen/qwen3.8-27b:    {rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000}
+      allam-2-7b:          {rpm: 30, rpd: 7000, tpm: 6000, tpd: 500000}
+    # Groq also currently offers groq/compound, groq/compound-mini (agentic
+    # meta-models, not plain chat - out of scope for the tier ladder) and the
+    # guard/safeguard models, which non_chat_patterns already refuses.
+
+  # A local Ollama daemon. The only endpoint here that costs nothing and cannot
+  # rate-limit, which makes it the right home for high-volume, low-judgment work
+  # - the calls that would otherwise spend a hosted free tier's whole minute.
+  #
+  # Deliberately has no `api_key_env`. That is what makes it keyless: an empty
+  # api_key_env means `Endpoint.has_credentials` is true and `chat_model()`
+  # skips the auth check, so this endpoint stays in the ladder on a machine with
+  # no API keys at all. The daemon's address comes from OLLAMA_BASE_URL,
+  # defaulting to http://localhost:11434.
+  ollama:
+    # per_session, not per_model: the limits below are self-imposed to protect
+    # the machine, not billed by anyone, so pooling them into one bucket is both
+    # accurate and cheaper to track.
+    quota_scope: per_session
+    supports_streaming: true
+    # Nothing to wait out but the machine itself, so recover fast.
+    cooldown_seconds: 15
+    # Gemma-family models have weak-to-absent tool calling, so function_calling
+    # does not reliably produce a call at all. Constrain decoding instead.
+    structured_output_method: json_schema
+    # Local and unmetered. The rpm figure exists only to stop a wide fan-out
+    # queueing the whole graph onto one GPU; the token figures are effectively
+    # unbounded and are present so the ledger has a counter to report against.
+    default_limits: {rpm: 60, tpm: 1000000}
+
+  mistral:
+    quota_scope: per_model
+    api_key_env: MISTRAL_API_KEY
+    supports_streaming: true
+    cooldown_seconds: 30
+    # Mistral's real free tier is enforced per model as requests/second, not a
+    # flat per-account rpm - each model below got its own RPS from the account's
+    # quota dashboard. min_interval_seconds is the real enforcement; rpm is a
+    # derived rolling-window backstop (floor(rps * 60)) the ledger also checks.
+    # No public usage-check endpoint exists, so the ledger is the only signal
+    # until a 429 lands.
+    #
+    # A rate-limit reference initially quoted glm-5-2 (1.00 rps, 20000 tpm) and
+    # mistral-large-2512 (1.00 rps, 250000 tpm) as available here too, but
+    # `python scripts/verify_models.py` found neither one in this account's
+    # live /v1/models listing - not under that id, any other dated snapshot, or
+    # a bare/-latest alias. That reference evidently covers Mistral's whole
+    # catalogue across account tiers, not what this specific account can
+    # actually call. Left out rather than shipped as a guaranteed 404; add them
+    # back (with real, verified ids) if account access ever includes them.
+    # (GLM 5.2 is reachable anyway, as a :free model on OpenRouter - see below.)
+    min_interval_seconds:
+      ministral-14b-2512: 2.0       # 0.50 rps
+      ministral-3b-2512: 0.08       # 12.50 rps
+      ministral-8b-2512: 0.32       # 3.13 rps
+      mistral-medium-latest: 1.0    # 1.00 rps
+      mistral-small-2603: 1.0       # 1.00 rps
+    default_limits: {rpm: 55, tpm: 20000}
+    models:
+      ministral-14b-2512:    {rpm: 30,  tpm: 937500}
+      ministral-3b-2512:     {rpm: 750, tpm: 1300000}
+      ministral-8b-2512:     {rpm: 187, tpm: 625000}
+      mistral-medium-latest: {rpm: 60,  tpm: 20000}
+      mistral-small-2603:    {rpm: 60,  tpm: 20000}
+    # Also on the account but not wired into models.yaml: codestral-2508 (a
+    # code-completion/FIM model, not general chat - 625000 tpm, 2.08 rps) and
+    # labs-leanstral-1-5-1 (an unversioned Labs preview - 5000000 tpm, 0.63 rps).
+
+  nvidia_nim:
+    quota_scope: per_account          # account-wide flat cap, not per-model
+    api_key_env: NVIDIA_API_KEY
+    supports_streaming: true
+    cooldown_seconds: 60
+    # One flat 40 rpm across the whole account, so every model shares a bucket
+    # and there is nothing to override per model - default_limits is the limit.
+    default_limits: {rpm: 40}
+    # 40 rpm -> 1.5s apart. Worth spacing rather than reacting to a 429, because
+    # NIM's own docs warn this is heavily-shared public infrastructure: calls
+    # can be slow and can time out under load, and a burned request there costs
+    # far more wall-clock than the 1.5s wait does. The wrapper also gives NIM a
+    # longer HTTP timeout than the other providers for the same reason, and a
+    # timeout is interpreted as transient, so the ladder steps past it.
+    min_interval_seconds: 1.5
+    # NIM namespaces every model id by publisher (moonshotai/kimi-k3,
+    # openai/gpt-oss-20b, nvidia/nemotron-...), so models.yaml uses the
+    # prefixed forms. Quota is account-wide, so the ids do not affect the ledger
+    # key or the limits either way - but a wrong one is a 404 that costs an
+    # endpoint. Run `python scripts/verify_models.py --provider nvidia_nim`.
+
+  google_ai_studio:
+    quota_scope: per_project
+    # Quota is per Google Cloud *project*, not per key: extra keys under one
+    # project do not multiply anything. Every model therefore shares one ledger
+    # bucket, while the per-model numbers below are still enforced individually
+    # against that shared usage - so spending on flash eats into gemma's budget,
+    # but gemma still gets its own, much larger allowance.
+    #
+    # Worth knowing: Google's own 429 bodies name the limit as
+    # "GenerateRequestsPerDayPerProjectPerModel-FreeTier", which suggests the
+    # counters are per project *per model* rather than one project-wide pool.
+    # If that is right, `per_project` is stricter than reality and you are
+    # leaving free requests unused. Switching this one line to `per_model` gives
+    # each model its own bucket; the ledger never keys on the API key, so extra
+    # keys still will not multiply your quota either way. Left strict by
+    # default because under-using a free tier is cheaper than 429ing on it.
+    #
+    # This matters more now than it used to. models.yaml lists all eight models
+    # the account exposes, but under `per_project` they pool into one bucket and
+    # one 429 cools down all of them at once - so the extra ids buy model
+    # variety, not capacity. Flip this line to `per_model` if you want the eight
+    # separate allowances the 429 text implies actually exist.
+    api_key_env: [GOOGLE_API_KEY, GEMINI_API_KEY]
+    supports_streaming: true
+    cooldown_seconds: 60
+    # Free-tier RPM is low enough on the Gemini models that reacting to a 429 is
+    # already a wasted request, so calls are spaced pre-emptively; the spacing
+    # differs a lot by model (Gemini Flash vs the much looser Gemma models), so
+    # this is a per-model_id mapping rather than one blanket number.
+    min_interval_seconds:
+      gemini-3.8-flash: 12.0        # 5 rpm
+      gemini-3.7-flash: 12.0        # 5 rpm
+      gemini-3.6-flash: 12.0        # 5 rpm
+      gemini-3.5-flash: 12.0        # 5 rpm
+      gemini-3.5-flash-lite: 4.0    # 15 rpm
+      gemini-3.1-flash-lite: 6.0    # 10 rpm
+      gemma-4-31b-it: 2.0           # 30 rpm
+      gemma-4-26b-a4b-it: 2.0       # 30 rpm
+    default_limits: {rpm: 5, rpd: 20}
+    # Three allowances, by family rather than by version - the account's quota
+    # page quotes one number per family and every release inside a family shares
+    # it. Plain Flash is the tight one (5 rpm / 20 rpd); the current Flash Lite
+    # generation is the loose one (15 rpm / 500 rpd) while the older 3.1 Lite
+    # still carries the previous generation's much stingier 10 rpm / 20 rpd;
+    # Gemma is looser again (30 rpm / 14400 rpd) but with a far smaller tpm.
+    models:
+      gemini-3.8-flash:      {rpm: 5,  rpd: 20,  tpm: 250000}
+      gemini-3.7-flash:      {rpm: 5,  rpd: 20,  tpm: 250000}
+      gemini-3.6-flash:      {rpm: 5,  rpd: 20,  tpm: 250000}
+      gemini-3.5-flash:      {rpm: 5,  rpd: 20,  tpm: 250000}
+      gemini-3.5-flash-lite: {rpm: 15, rpd: 500, tpm: 250000}
+      gemini-3.1-flash-lite: {rpm: 10, rpd: 20,  tpm: 250000}
+      gemma-4-31b-it:        {rpm: 30, rpd: 14400, tpm: 16000}
+      gemma-4-26b-a4b-it:    {rpm: 30, rpd: 14400, tpm: 16000}
+
+  openrouter:
+    quota_scope: per_account          # shared across ALL :free models, not per-model
+    api_key_env: OPENROUTER_API_KEY
+    supports_streaming: true
+    cooldown_seconds: 60
+    usage_endpoint: "https://openrouter.ai/api/v1/key"   # poll periodically, not per request
+    default_limits: {rpm: 20, rpd: 50}
+    # rpd becomes ~1000 if the account has ever added $10+ of credit. This is
+    # not read automatically - it is a fact about the account, not the request -
+    # so raise `rpd` above by hand if that applies to you.
+    free_pool_with_credit: {rpm: 20, rpd: 1000}
+    # 20 rpm -> 3s apart, account-wide. The daily cap is the real constraint
+    # though: 50 requests a day is the tightest budget of any provider here,
+    # which is why every OpenRouter endpoint in models.yaml sits at priority 60,
+    # behind everything else. It is the reserve tank, not the main one.
+    min_interval_seconds: 3.0
+    # The :free catalogue is large and churns constantly, and because the whole
+    # pool shares this one account bucket, adding more ids buys model variety
+    # rather than capacity. models.yaml therefore wires a deliberately small,
+    # curated slice - the best free option at each tier - instead of everything
+    # on offer. `python scripts/verify_models.py --provider openrouter --suggest`
+    # lists what else is currently available when you want to re-pick.
+
+  # ---------------------------------------------------------------------------
+  # Not in scope. Facts kept here so adding one later is a config change plus
+  # a wrapper in providers.py, not a re-research. Each is disabled until its
+  # wrapper exists.
+  # ---------------------------------------------------------------------------
+
+  cloudflare:
+    enabled: false
+    quota_scope: per_model            # assumed, unconfirmed
+    api_key_env: [CLOUDFLARE_API_TOKEN, CLOUDFLARE_API_KEY]
+    supports_streaming: false         # ChatCloudflareWorkersAI has no streaming
+    cooldown_seconds: 60
+    default_limits: {rpm: 30}
+
+  ollama_cloud:
+    enabled: false
+    quota_scope: per_session          # session + weekly, not RPM-shaped
+    api_key_env: OLLAMA_API_KEY
+    cooldown_seconds: 300
+    default_limits: {rpw: 2000}
+    # Models available: gemma4:31b, gpt-oss:120b, gpt-oss:20b,
+    # nemotron-3-nano:30b, nemotron-3-super, nemotron-3-ultra.

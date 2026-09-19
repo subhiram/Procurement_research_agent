@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv venv *)",
+      "Bash(uv pip *)",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(.venv/bin/python -m pytest tests/test_router.py -q)",
+      "Bash(.venv/bin/python -m pytest tests/test_depth.py -q)",
+      "Bash(python3 -)",
+      "Bash(.venv/bin/python -m pytest tests/test_quota.py tests/test_depth.py -q)",
+      "Bash(.venv/bin/python -m pytest tests/test_quota.py -q)",
+      "Bash(.venv/bin/python -m pytest -q)",
+      "Bash(.venv/bin/python -m ruff check src tests)",
+      "Bash(.venv/bin/python -m ruff check --fix src tests)",
+      "Bash(timeout 90 .venv/bin/python examples/research_agent.py \"what is retrieval augmented generation\")",
+      "Bash(.venv/bin/python examples/research_agent.py \"what is retrieval augmented generation\")",
+      "Bash(.venv/bin/python -m pytest tests/test_http_extract.py -q)",
+      "WebSearch",
+      "Bash(.venv/bin/python -m pytest tests/test_providers_phase3.py -q)",
+      "Bash(.venv/bin/python scripts/smoke.py --depth content)",
+      "Bash(python3 -c ' *)",
+      "Bash(.venv/bin/pip install *)",
+      "Bash(.venv/bin/python -m ruff check src)",
+      "Bash(.venv/bin/python -m ruff check --fix src)",
+      "Bash(.venv/bin/python -m pytest tests/test_tools.py -q)",
+      "Bash(.venv/bin/python -m ruff check src tests examples scripts)",
+      "Bash(.venv/bin/python /private/tmp/claude-501/-Users-subhiramgurlinka-Documents-GEN-AI-projects-SearchRoute/68f9f5d5-6248-4b35-b74c-7d727d5968a6/scratchpad/verify_agents_md.py)",
+      "Bash(.venv/bin/python /private/tmp/claude-501/-Users-subhiramgurlinka-Documents-GEN-AI-projects-SearchRoute/68f9f5d5-6248-4b35-b74c-7d727d5968a6/scratchpad/verify_docs.py)",
+      "Bash(.venv/bin/python -m pytest tests/test_examples.py -q)",
+      "Bash(.venv/bin/python -m ruff check --fix src tests examples scripts)"
+    ]
+  }
+}

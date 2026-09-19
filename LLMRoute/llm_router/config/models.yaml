@@ -1,0 +1,255 @@
+# Logical model -> concrete provider endpoints.
+#
+# A "logical model" is a model family you ask for by name (e.g. `qwen-27b`).
+# An "endpoint" is one real place that family can actually be called.
+# `tier` is a property of the family, never of the endpoint.
+#
+# Endpoint fields:
+#   provider          required, must exist in limits.yaml
+#   model_id          required, the provider's own id for this model
+#   supports_streaming optional, default true (set false to hide from streaming calls)
+#   priority          optional int, lower = preferred within a ladder step (default 100)
+#
+# Priorities below run
+#   groq(10) < mistral(30) < nvidia_nim(40) < google(50) < openrouter(60),
+# which is roughly how generous each free tier is, tie-broken by how reliably it
+# answers. A request that names no provider therefore spends the abundant quota
+# first and keeps the scarce quota in reserve for when it is the only thing
+# left: Google's plain Flash models are only 5 rpm / 20 rpd and all pool into
+# one project-wide bucket, and OpenRouter's whole :free catalogue shares a
+# single 20 rpm / 50 rpd account bucket - the tightest daily budget here, hence
+# last. NVIDIA NIM sits above both on quota (40 rpm account-wide) but below
+# Groq and Mistral because it is shared public infrastructure that can be slow
+# or time out under load.
+#
+# This file is restricted to models the account actually has access to (see the
+# per-provider quota tables pasted into limits.yaml). Deliberate omissions:
+#   - Cerebras is removed entirely - provider block, wrapper class and
+#     dependency. Its free allowance was one-time sign-up credit rather than a
+#     refilling quota, and the account in use returns HTTP 402 on any
+#     completion, so there was nothing to route to.
+#
+# `ollama` is the exception to the priority scheme above: it is a local daemon,
+# so it is free, unmetered and cannot rate-limit, but it is also roughly an
+# order of magnitude slower. It therefore sits at priority 950 - last within its
+# tier - so hosted quota is spent first and Ollama absorbs the overflow instead
+# of the request failing. It is the only endpoint that works with no API keys.
+#   - Groq's `groq/compound` and `groq/compound-mini`: these are agentic
+#     meta-models that call tools/web search internally, not a plain chat
+#     completion, so they do not fit the tier ladder the way a normal model does.
+#   - Mistral's `codestral-2508` (a code-completion/FIM model, not general
+#     chat) and `labs-leanstral-1-5-1` (an unversioned Labs preview - could be
+#     pulled or reshaped without notice).
+#   - From OpenRouter's :free catalogue: `nvidia/nemotron-3.5-content-safety`
+#     (a safety classifier - non_chat_patterns refuses it anyway),
+#     `cohere/north-mini-code` (code completion), the `inclusionai/ling-3.0-*`
+#     variants (domain-tuned for health and finance rather than general chat),
+#     `dots-studio/dots-3-note-preview` (an unversioned preview) and a handful
+#     of mid-size Nemotrons. Because every :free model draws on the same account
+#     bucket, a longer list would add variety but no capacity, so this is a
+#     curated slice rather than the whole catalogue.
+# Add any of these back the same way as everything else if you want them.
+#
+# Model ids drift. Run `python scripts/verify_models.py` with your API keys set to
+# diff this file against each provider's live catalogue before trusting it.
+#
+# NVIDIA NIM namespaces every id by publisher - `moonshotai/kimi-k3`, not
+# `kimi-k3`. That is confirmed by NVIDIA's own generated sample code and by the
+# model table langchain-nvidia-ai-endpoints ships, in which every entry has the
+# publisher prefix. Only `moonshotai/kimi-k3` is confirmed verbatim; the other
+# four prefixes below follow the same convention from the publisher of each
+# model, so they are the likeliest form but still want a run of
+# `python scripts/verify_models.py --provider nvidia_nim` against a real key.
+
+models:
+  # ---------------------------------------------------------------- tier S ---
+  # json_schema on the Groq endpoints, not the provider default: measured, under
+  # function_calling these two intermittently answer in prose instead of emitting
+  # the tool call and Groq rejects that with a 400 - observed live on a
+  # materials-research schema that came back as a markdown table. It is an
+  # endpoint override rather than a provider setting because Groq supports
+  # json_schema on some models only (allam-2-7b 400s on it).
+  gpt-oss-120b:
+    tier: S
+    endpoints:
+      - {provider: groq, model_id: openai/gpt-oss-120b, priority: 10,
+         structured_output_method: json_schema}
+
+  deepseek-v4-pro:
+    tier: S
+    endpoints:
+      - {provider: nvidia_nim, model_id: deepseek-ai/deepseek-v4-pro-0813, priority: 40}
+
+  kimi-k3:
+    tier: S
+    endpoints:
+      - {provider: nvidia_nim, model_id: moonshotai/kimi-k3, priority: 40}
+
+  # glm-5.2 removed: OpenRouter withdrew `z-ai/glm-5.2:free` and now serves no
+  # free z-ai model at all, so there was nothing left to route to. Verified
+  # against the live catalogue rather than assumed - a stale id costs the
+  # endpoint an hour-long cooldown at runtime, mid-request.
+
+  # minimax-m3 and minimax-m2.7 removed: OpenRouter has withdrawn every free
+  # MiniMax model, verified against the live catalogue. They were present when
+  # this file was last checked, which is the point - a free catalogue changes
+  # under you, and a stale id costs the endpoint an hour-long cooldown at
+  # runtime, mid-request. The fallback drill caught this one as
+  # "openrouter rejected model id 'minimax/minimax-m3:free' as unknown".
+
+  nemotron-ultra:
+    tier: S
+    endpoints:
+      # The slowest endpoint in this file by a wide margin (~45s to first token,
+      # ~6 tok/s on the free pool). Kept because it is one of very few free
+      # flagship-tier options, but a latency-sensitive caller should ask for a
+      # different tier-S model by name rather than let the ladder land here.
+      - {provider: openrouter, model_id: nvidia/nemotron-3-ultra-550b-a55b:free, priority: 60}
+
+  # ---------------------------------------------------------------- tier A ---
+  qwen-27b:
+    tier: A
+    endpoints:
+      # Groq lists both 3.6 and 3.8 with identical limits; since Groq quota is
+      # per model_id, keeping both doubles the real request budget for this
+      # logical model rather than just picking one.
+      - {provider: groq, model_id: qwen/qwen3.8-27b, priority: 10}
+      - {provider: groq, model_id: qwen/qwen3.6-27b, priority: 11}
+
+  gemma-31b:
+    tier: A
+    endpoints:
+      - {provider: nvidia_nim, model_id: google/gemma-4-31b-it, priority: 40}
+      - {provider: google_ai_studio, model_id: gemma-4-31b-it, priority: 50}
+      - {provider: openrouter, model_id: google/gemma-4-31b-it:free, priority: 60}
+
+  mistral-medium:
+    tier: A
+    endpoints:
+      - {provider: mistral, model_id: mistral-medium-latest, priority: 30}
+
+  ministral-14b:
+    tier: A
+    endpoints:
+      - {provider: mistral, model_id: ministral-14b-2512, priority: 30}
+
+  nemotron-super:
+    tier: A
+    endpoints:
+      - {provider: nvidia_nim, model_id: nvidia/nemotron-3-super-120b-a12b, priority: 40}
+      - {provider: openrouter, model_id: nvidia/nemotron-3-super-120b-a12b:free, priority: 60}
+
+  gemini-flash:
+    tier: A
+    endpoints:
+      # Every plain Flash release the account exposes. They share one project
+      # bucket and one 5 rpm / 20 rpd allowance per model, so these are listed
+      # newest-first and exist for variety and for surviving a single model's
+      # 429, not as extra capacity - see the quota_scope note in limits.yaml.
+      - {provider: google_ai_studio, model_id: gemini-3.8-flash, priority: 50}
+      - {provider: google_ai_studio, model_id: gemini-3.7-flash, priority: 51}
+      - {provider: google_ai_studio, model_id: gemini-3.6-flash, priority: 52}
+      - {provider: google_ai_studio, model_id: gemini-3.5-flash, priority: 53}
+
+  inkling:
+    tier: A
+    endpoints:
+      - {provider: openrouter, model_id: thinkingmachines/inkling:free, priority: 60}
+
+  # ---------------------------------------------------------------- tier B ---
+  gpt-oss-20b:
+    tier: B
+    endpoints:
+      - {provider: groq, model_id: openai/gpt-oss-20b, priority: 10,
+         structured_output_method: json_schema}
+      - {provider: nvidia_nim, model_id: openai/gpt-oss-20b, priority: 40}
+
+  # The local backstop for the whole of tier B, and pinnable by name for bulk
+  # work rather than only reachable by exhaustion.
+  #
+  # Deliberately its own logical model rather than an extra endpoint on
+  # gpt-oss-20b: listing it under another model too would put the same endpoint
+  # in the tier twice, and the ladder would spend two of its attempts on one
+  # daemon. Tier B still reaches it either way, via the "same tier, any
+  # provider" step.
+  #
+  # NOT an -mlx build. Measured: gemma4:12b-mlx ignores Ollama's structured
+  # output `format` schema completely and replies in free prose, because the MLX
+  # backend does no grammar-constrained decoding. gemma4:e4b honours it. Any
+  # caller relying on structured output cannot use an MLX model at all.
+  gemma-e4b:
+    tier: B
+    endpoints:
+      - {provider: ollama, model_id: gemma4:e4b, priority: 950}
+
+  allam-2-7b:
+    tier: B
+    endpoints:
+      # Supports NEITHER json_schema ("This model does not support response
+      # format `json_schema`") NOR tool calling ("`tool calling` is not
+      # supported with this model") - both verified as live 400s. So it cannot
+      # do structured output at all, and is hidden from any request carrying a
+      # schema. It remains routable for plain text completions.
+      - {provider: groq, model_id: allam-2-7b, priority: 10,
+         supports_structured_output: false}
+
+  mistral-small:
+    tier: B
+    endpoints:
+      - {provider: mistral, model_id: mistral-small-2603, priority: 30}
+
+  ministral-8b:
+    tier: B
+    endpoints:
+      - {provider: mistral, model_id: ministral-8b-2512, priority: 30}
+
+  ministral-3b:
+    tier: B
+    endpoints:
+      - {provider: mistral, model_id: ministral-3b-2512, priority: 30}
+
+  gemma-26b:
+    tier: B
+    endpoints:
+      - {provider: google_ai_studio, model_id: gemma-4-26b-a4b-it, priority: 50}
+      - {provider: openrouter, model_id: google/gemma-4-26b-a4b-it:free, priority: 60}
+
+  gemini-flash-lite:
+    tier: B
+    endpoints:
+      # 3.5 Lite is the current generation and carries the better allowance
+      # (15 rpm / 500 rpd); 3.1 Lite is the previous one and is strictly worse
+      # (10 rpm / 20 rpd) on the same pooled project quota, so it is listed
+      # second and only earns its place when 3.5 Lite is cooling down.
+      - {provider: google_ai_studio, model_id: gemini-3.5-flash-lite, priority: 50}
+      - {provider: google_ai_studio, model_id: gemini-3.1-flash-lite, priority: 51}
+
+  inkling-small:
+    tier: B
+    endpoints:
+      - {provider: openrouter, model_id: thinkingmachines/inkling-small:free, priority: 60}
+
+  laguna-xs:
+    tier: B
+    endpoints:
+      - {provider: openrouter, model_id: poolside/laguna-xs-2.1:free, priority: 60}
+
+  lfm-2.5:
+    tier: B
+    endpoints:
+      - {provider: openrouter, model_id: liquid/lfm-2.5-2.6b:free, priority: 60}
+
+# Endpoints whose model_id matches any of these fnmatch patterns are refused at
+# load time. These are classifiers / guard / audio / embedding models that are
+# not general chat models and must never be selectable as a chat endpoint.
+non_chat_patterns:
+  - "*prompt-guard*"
+  - "*safeguard*"
+  - "*guard-2*"
+  - "*llama-guard*"
+  - "*content-safety*"
+  - "*moderation*"
+  - "*whisper*"
+  - "*-tts*"
+  - "*embed*"
+  - "*rerank*"
