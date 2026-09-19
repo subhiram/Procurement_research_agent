@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "searchroute"
-dynamic = ["version"]
+version = "0.1.0"
 description = "A pluggable web-search router for AI agents: one interface, many providers, free-tier quota tracking and automatic fallback."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -57,9 +57,6 @@ dev = [
 [project.urls]
 Homepage = "https://github.com/subhiram/searchroute"
 Issues = "https://github.com/subhiram/searchroute/issues"
-
-[tool.hatch.version]
-path = "src/searchroute/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/searchroute"]
