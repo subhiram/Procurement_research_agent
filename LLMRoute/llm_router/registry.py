@@ -11,10 +11,13 @@ import fnmatch
 import logging
 import os
 import re
+import socket
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping, Sequence
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -266,6 +269,79 @@ def _parse_provider(name: str, raw: Mapping[str, Any]) -> ProviderConfig:
 
 
 # --------------------------------------------------------------------------- #
+# Ollama reachability
+# --------------------------------------------------------------------------- #
+
+#: Ollama is the only keyless endpoint: with no `api_key_env` to check,
+#: nothing else stops it from being offered on a machine that has no daemon at
+#: all - exactly the case on a hosted deploy (e.g. Streamlit Community Cloud)
+#: with no local Ollama process. A cheap reachability probe against its
+#: configured address settles that before the endpoint is ever handed to the
+#: ladder, rather than the ladder discovering it only after a real call burns
+#: its connection timeout against a closed port.
+OLLAMA_BASE_URL_ENV = "OLLAMA_BASE_URL"
+OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434"
+OLLAMA_PROBE_TIMEOUT = 0.3
+#: How long a probe result is trusted before checking again. Long enough that
+#: a hot path of many calls in one turn does not re-probe for each of them,
+#: short enough that starting the daemon mid-session is noticed quickly.
+OLLAMA_PROBE_CACHE_SECONDS = 15.0
+
+_ollama_probe_lock = threading.Lock()
+_ollama_probe_cache: tuple[float, bool] | None = None
+
+
+def ollama_base_url() -> str:
+    """The Ollama daemon's address: `OLLAMA_BASE_URL`, or its localhost default."""
+    return os.environ.get(OLLAMA_BASE_URL_ENV) or OLLAMA_DEFAULT_BASE_URL
+
+
+def _ollama_daemon_reachable() -> bool:
+    """Whether the configured Ollama daemon actually answers right now.
+
+    A plain TCP connect, not a full HTTP round trip: fast enough to run on
+    every call that touches the ladder, and a closed or refused port is
+    exactly what "no daemon here" looks like. Cached briefly so it costs one
+    connect per window rather than one per call.
+    """
+    global _ollama_probe_cache
+    now = time.monotonic()
+    with _ollama_probe_lock:
+        if _ollama_probe_cache is not None:
+            checked_at, reachable = _ollama_probe_cache
+            if now - checked_at < OLLAMA_PROBE_CACHE_SECONDS:
+                return reachable
+
+    url = ollama_base_url()
+    parsed = urlsplit(url)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        with socket.create_connection((host, port), timeout=OLLAMA_PROBE_TIMEOUT):
+            reachable = True
+    except OSError:
+        reachable = False
+
+    with _ollama_probe_lock:
+        previous = _ollama_probe_cache
+        _ollama_probe_cache = (now, reachable)
+    if not reachable and (previous is None or previous[1] is not False):
+        logger.info(
+            "ollama daemon not reachable at %s; excluding it from the ladder "
+            "until it is (re-checked every %.0fs)",
+            url, OLLAMA_PROBE_CACHE_SECONDS,
+        )
+    return reachable
+
+
+def reset_ollama_probe_cache() -> None:
+    """Drop the cached reachability result. Tests, or after starting Ollama."""
+    global _ollama_probe_cache
+    with _ollama_probe_lock:
+        _ollama_probe_cache = None
+
+
+# --------------------------------------------------------------------------- #
 # Registry
 # --------------------------------------------------------------------------- #
 
@@ -431,9 +507,16 @@ class Registry:
             yield from endpoints
 
     def is_usable(self, provider_name: str) -> bool:
-        """Provider is switched on and its API key is present."""
+        """Provider is switched on, its API key is present, and it answers.
+
+        Ollama is exempt from the key check but not from this one: it is only
+        "usable" when its daemon is actually reachable, so a deploy with no
+        local Ollama at all does not have it offered anyway.
+        """
         provider = self._providers.get(provider_name)
         if provider is None or not provider.enabled:
+            return False
+        if provider_name == "ollama" and not _ollama_daemon_reachable():
             return False
         if not provider.api_key_env:
             return True
@@ -469,6 +552,8 @@ class Registry:
             provider = self._providers[endpoint.provider]
             if not provider.enabled:
                 continue
+            if endpoint.provider == "ollama" and not _ollama_daemon_reachable():
+                continue
             if require_credentials and not endpoint.has_credentials:
                 continue
             out.append(endpoint)
@@ -476,6 +561,16 @@ class Registry:
 
     def models_in_tier(self, tier: str) -> tuple[str, ...]:
         return tuple(m for m, t in self._tiers.items() if t == tier)
+
+    def _unusable_reason(self, provider_name: str) -> str:
+        if self.is_usable(provider_name):
+            return ""
+        provider = self._providers.get(provider_name)
+        if provider is None or not provider.enabled:
+            return " (disabled)"
+        if provider_name == "ollama":
+            return f" (daemon unreachable at {ollama_base_url()})"
+        return " (no key)"
 
     def describe(self) -> str:  # pragma: no cover - diagnostics
         lines = []
@@ -486,8 +581,7 @@ class Registry:
                 f"{model} [tier {self.tier_of(model)}] "
                 f"{len(live)}/{len(eps)} endpoints usable: "
                 + ", ".join(
-                    f"{e.provider}/{e.model_id}"
-                    + ("" if self.is_usable(e.provider) else " (no key)")
+                    f"{e.provider}/{e.model_id}{self._unusable_reason(e.provider)}"
                     for e in eps
                 )
             )

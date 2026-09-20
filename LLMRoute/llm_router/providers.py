@@ -14,7 +14,6 @@ route to.
 from __future__ import annotations
 
 import logging
-import os
 import re
 import threading
 import time
@@ -25,7 +24,7 @@ from typing import Any, Iterator, Mapping, Sequence
 
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
 
-from .registry import Endpoint
+from .registry import Endpoint, ollama_base_url
 
 logger = logging.getLogger("llm_router.providers")
 
@@ -736,9 +735,6 @@ class OllamaProvider(BaseProvider):
     name = "ollama"
     package = "langchain-ollama"
 
-    #: Matches Ollama's own default. Overridden by OLLAMA_BASE_URL.
-    default_base_url = "http://localhost:11434"
-
     def _model_class(self) -> type:
         from langchain_ollama import ChatOllama
 
@@ -748,10 +744,10 @@ class OllamaProvider(BaseProvider):
         ChatOllama = self._model_class()
 
         # A caller-supplied base_url wins, so a test server or a remote daemon
-        # can be pointed at without touching the environment.
-        kwargs.setdefault(
-            "base_url", os.environ.get("OLLAMA_BASE_URL") or self.default_base_url
-        )
+        # can be pointed at without touching the environment. Otherwise this is
+        # the same OLLAMA_BASE_URL (or its localhost default) the registry
+        # already used to decide this endpoint was reachable at all.
+        kwargs.setdefault("base_url", ollama_base_url())
         return ChatOllama(model=endpoint.model_id, **kwargs)
 
     def interpret(self, exc: BaseException, endpoint: Endpoint) -> RouterError:

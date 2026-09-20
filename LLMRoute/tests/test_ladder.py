@@ -285,6 +285,58 @@ def test_ollama_is_routable_with_no_credentials_at_all(registry, monkeypatch):
     assert {e.provider for e in endpoints} == {"ollama"}
 
 
+def test_ollama_drops_out_when_daemon_unreachable(registry, monkeypatch):
+    """The other half of the keyless backstop: no daemon means no candidate.
+
+    A hosted deploy (e.g. Streamlit Community Cloud) has no local Ollama
+    process at all. Being keyless must not make it look permanently usable
+    there - the registry has to notice the daemon does not answer and stop
+    offering it, rather than let the ladder discover that only after a real
+    call burns its connection timeout against a closed port.
+    """
+    from llm_router import registry as registry_module
+
+    monkeypatch.setattr(registry_module, "_ollama_daemon_reachable", lambda: False)
+
+    assert not registry.is_usable("ollama")
+    endpoints = registry.enabled_endpoints(tier="B")
+    assert not any(e.provider == "ollama" for e in endpoints)
+
+
+def test_ollama_base_url_env_var(monkeypatch):
+    from llm_router.registry import OLLAMA_DEFAULT_BASE_URL, ollama_base_url
+
+    monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+    assert ollama_base_url() == OLLAMA_DEFAULT_BASE_URL
+
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.internal:11434")
+    assert ollama_base_url() == "http://ollama.internal:11434"
+
+
+@pytest.mark.real_ollama_probe
+def test_ollama_reachability_probe_is_cached(monkeypatch):
+    """A closed port must not be re-dialed on every single ladder resolution."""
+    from llm_router import registry as registry_module
+
+    registry_module.reset_ollama_probe_cache()
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://127.0.0.1:1")  # nothing listens
+
+    calls = []
+    real_connect = registry_module.socket.create_connection
+
+    def counting_connect(*args, **kwargs):
+        calls.append(1)
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(registry_module.socket, "create_connection", counting_connect)
+
+    assert registry_module._ollama_daemon_reachable() is False
+    assert registry_module._ollama_daemon_reachable() is False
+    assert len(calls) == 1  # second call served from cache
+
+    registry_module.reset_ollama_probe_cache()
+
+
 def test_unknown_model_raises(registry):
     with pytest.raises(KeyError, match="unknown model"):
         resolve_candidates("no-such-model", registry=registry)

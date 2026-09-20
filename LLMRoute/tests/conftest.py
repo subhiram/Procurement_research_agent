@@ -32,6 +32,25 @@ def registry():
     return load_registry()
 
 
+@pytest.fixture(autouse=True)
+def ollama_reachable(request, monkeypatch):
+    """Assume the local Ollama daemon is running, as it is on a dev machine.
+
+    Every test that relies on Ollama's keyless backstop being in the ladder
+    depends on this. The registry now also gates Ollama on a live TCP probe of
+    OLLAMA_BASE_URL, so without this fixture the whole suite would depend on a
+    real daemon running wherever it executes - including CI, which has none.
+    Tests that care about the unreachable case (or the probe itself) opt out
+    with @pytest.mark.real_ollama_probe.
+    """
+    if request.node.get_closest_marker("real_ollama_probe"):
+        return
+
+    from llm_router import registry
+
+    monkeypatch.setattr(registry, "_ollama_daemon_reachable", lambda: True)
+
+
 @pytest.fixture
 def all_keys(monkeypatch):
     """Pretend every routable provider has credentials.

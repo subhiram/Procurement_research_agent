@@ -89,6 +89,22 @@ def _no_network_crawling(monkeypatch):
     """
     monkeypatch.setattr(get_settings(), "enable_crawl4ai", False)
 
+
+@pytest.fixture(autouse=True)
+def _assume_ollama_reachable(monkeypatch):
+    """Assume the local Ollama daemon is running, as it is on a dev machine.
+
+    LLMRoute's registry only offers Ollama's endpoints when a live TCP probe of
+    OLLAMA_BASE_URL succeeds - the fix for a Streamlit Cloud deploy (no daemon
+    at all) wrongly being offered it and hanging on every call. Without this
+    fixture, this suite's own tier-composition tests (e.g.
+    `test_bulk_can_reach_a_free_local_endpoint`) would depend on whichever
+    machine runs them actually having Ollama up, which CI does not.
+    """
+    from llm_router import registry
+
+    monkeypatch.setattr(registry, "_ollama_daemon_reachable", lambda: True)
+
 #: A realistic scraped supplier page. Deliberately includes the noise that
 #: breaks naive extraction: an obfuscated address, a careers mailbox, a phone in
 #: a different format from how a model would write it, and numbers that look
