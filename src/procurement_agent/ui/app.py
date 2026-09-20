@@ -43,18 +43,18 @@ from langgraph.types import Command
 
 load_dotenv()
 
-for key in [
-    "GROQ_API_KEY",
-    "MISTRAL_API_KEY",
-    "NVIDIA_API_KEY",
-    "GOOGLE_API_KEY",
-    "OPENROUTER_API_KEY",
-    "TAVILY_API_KEY",
-    "EXA_API_KEY",
-    "FIRECRAWL_API_KEY",
-]:
-    if key in st.secrets:
-        os.environ[key] = st.secrets[key]
+# for key in [
+#     "GROQ_API_KEY",
+#     "MISTRAL_API_KEY",
+#     "NVIDIA_API_KEY",
+#     "GOOGLE_API_KEY",
+#     "OPENROUTER_API_KEY",
+#     "TAVILY_API_KEY",
+#     "EXA_API_KEY",
+#     "FIRECRAWL_API_KEY",
+# ]:
+#     if key in st.secrets:
+#         os.environ[key] = st.secrets[key]
 
 from procurement_agent.config import get_settings  # noqa: E402
 from procurement_agent.graph.build import (  # noqa: E402
